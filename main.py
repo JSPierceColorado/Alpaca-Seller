@@ -7,6 +7,21 @@ from alpaca_trade_api import REST
 from datetime import datetime
 
 # ----------------------------------------------------------------------
+# Config from environment
+# ----------------------------------------------------------------------
+# Stop loss percentage (e.g. -3 for -3%)
+# Defaults to -3 if not provided or invalid
+def get_stop_loss_pct():
+    raw = os.environ.get("STOP_LOSS_PCT", "-3")
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"Invalid STOP_LOSS_PCT env value '{raw}', falling back to -3")
+        return -3.0
+
+STOP_LOSS_PCT = get_stop_loss_pct()
+
+# ----------------------------------------------------------------------
 # Google Sheets Setup
 # ----------------------------------------------------------------------
 def connect_sheet():
@@ -163,8 +178,8 @@ def run_cycle(ws):
         # selling logic
         should_sell = False
 
-        # Rule 1: hard stop-loss at -3%
-        if percent_gain <= -3:
+        # Rule 1: hard stop-loss at configured STOP_LOSS_PCT (e.g. -3%)
+        if percent_gain <= STOP_LOSS_PCT:
             should_sell = True
 
         # Rule 2: trailing take profit: if armed + drop 3% from ATH
@@ -174,7 +189,7 @@ def run_cycle(ws):
         if should_sell:
             try:
                 alpaca.close_position(ticker)
-                print(f"SOLD {ticker}")
+                print(f"SOLD {ticker} @ {round(percent_gain, 2)}% (STOP_LOSS_PCT={STOP_LOSS_PCT})")
 
                 record_closed_trade(ws, ticker, round(percent_gain, 2), armed)
 
@@ -206,6 +221,7 @@ def run_cycle(ws):
 # LOOP FOREVER
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
+    print(f"Using STOP_LOSS_PCT = {STOP_LOSS_PCT}")
     ws = connect_sheet()
     while True:
         try:
