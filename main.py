@@ -14,6 +14,7 @@ def connect_sheet():
     if not creds_json:
         raise ValueError("GOOGLE_CREDS_JSON env variable missing")
 
+    # NOTE: assumes GOOGLE_CREDS_JSON is a literal dict string in env
     creds_dict = eval(creds_json)
 
     scope = [
@@ -46,6 +47,7 @@ alpaca = REST(API_KEY, API_SECRET, APCA_API_BASE_URL)
 # Ensure Alpaca-Trader sheet has correct structure
 # ----------------------------------------------------------------------
 def ensure_sheet_structure(ws):
+    # Main active positions header in A1:H1
     sheet_header = [
         "Ticker", "Qty", "Cost Basis", "Current Price",
         "% Gain", "All-Time High % Gain", "Armed?", "Last Updated"
@@ -53,40 +55,71 @@ def ensure_sheet_structure(ws):
 
     try:
         existing = ws.row_values(1)
-        if existing != sheet_header:
-            ws.delete_rows(1)
-            ws.insert_row(sheet_header, 1)
-    except:
-        ws.insert_row(sheet_header, 1)
+        # Only compare the left portion (A1:H1) to avoid nuking formatting
+        if existing[:len(sheet_header)] != sheet_header:
+            ws.update(
+                values=[sheet_header],
+                range_name="A1:H1"
+            )
+    except Exception as e:
+        print("Error ensuring main header:", e)
+        ws.update(
+            values=[sheet_header],
+            range_name="A1:H1"
+        )
 
-    # Section header for closed trades
+    # Section header for closed trades in J1:N1
     closed_header = ["Closed Trades", "Ticker", "% Gain/Loss", "Armed?", "Closed At"]
     try:
+        # Column 10 == "J"
         if ws.cell(1, 10).value != "Closed Trades":
-            ws.update("J1", [[ "Closed Trades", "Ticker", "% Gain/Loss", "Armed?", "Closed At" ]])
-    except:
-        ws.update("J1", [[ "Closed Trades", "Ticker", "% Gain/Loss", "Armed?", "Closed At" ]])
+            ws.update(
+                values=[closed_header],
+                range_name="J1:N1"
+            )
+    except Exception as e:
+        print("Error ensuring closed-trades header:", e)
+        ws.update(
+            values=[closed_header],
+            range_name="J1:N1"
+        )
 
 
 # ----------------------------------------------------------------------
-# Load active tracker data from sheet
+# Load active tracker data from sheet (A1:H)
 # ----------------------------------------------------------------------
 def load_active(ws):
-    data = ws.get_all_records()
-    df = pd.DataFrame(data)
-    if df.empty:
+    # Only look at A1:H500 to avoid duplicate header issues
+    values = ws.get_values("A1:H500")
+
+    # If absolutely nothing or only header
+    if not values or len(values) < 2:
         return pd.DataFrame(columns=[
             "Ticker", "Qty", "Cost Basis", "Current Price",
             "% Gain", "All-Time High % Gain", "Armed?", "Last Updated"
         ])
+
+    header = values[0]
+    rows = values[1:]
+
+    # Strip out completely empty rows
+    rows = [row for row in rows if any(cell != "" for cell in row)]
+
+    if not rows:
+        return pd.DataFrame(columns=header)
+
+    # Google Sheets may return rows shorter than header, pad them
+    padded_rows = [row + [""] * (len(header) - len(row)) for row in rows]
+
+    df = pd.DataFrame(padded_rows, columns=header)
     return df
 
 
 # ----------------------------------------------------------------------
-# Log a closed trade
+# Log a closed trade (J table)
 # ----------------------------------------------------------------------
 def record_closed_trade(ws, ticker, gain, armed):
-    row = [ "", ticker, gain, armed, datetime.utcnow().isoformat() ]
+    row = ["", ticker, gain, armed, datetime.utcnow().isoformat()]
     ws.append_row(row, table_range="J1")
 
 
@@ -98,7 +131,6 @@ def run_cycle(ws):
     df = load_active(ws)
 
     positions = alpaca.list_positions()
-
     active_symbols = [pos.symbol for pos in positions]
 
     results = []
@@ -111,10 +143,11 @@ def run_cycle(ws):
         percent_gain = (current - cost) / cost * 100
 
         # fetch saved ATH + armed status
-        if ticker in df["Ticker"].values:
+        if not df.empty and ticker in df["Ticker"].values:
             row = df[df["Ticker"] == ticker].iloc[0]
-            ath = float(row["All-Time High % Gain"]) if row["All-Time High % Gain"] != "" else percent_gain
-            armed = row["Armed?"] == "TRUE"
+            ath_val = row.get("All-Time High % Gain", "")
+            ath = float(ath_val) if ath_val != "" else percent_gain
+            armed = str(row.get("Armed?", "")).upper() == "TRUE"
         else:
             ath = percent_gain
             armed = False
@@ -157,10 +190,16 @@ def run_cycle(ws):
             datetime.utcnow().isoformat()
         ])
 
-    # update sheet
-    ws.update("A2:H500", [[""]*8]*498)  # clear old
+    # update sheet: clear A2:H500 then write fresh results
+    ws.update(
+        range_name="A2:H500",
+        values=[[""] * 8] * 499  # rows 2–500 inclusive
+    )
     if results:
-        ws.update("A2", results)
+        ws.update(
+            range_name="A2",
+            values=results
+        )
 
 
 # ----------------------------------------------------------------------
