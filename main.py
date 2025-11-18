@@ -19,7 +19,29 @@ def get_stop_loss_pct():
         print(f"Invalid STOP_LOSS_PCT env value '{raw}', falling back to -3")
         return -3.0
 
+# Percent gain at which a trade becomes "armed"
+# Defaults to 5 if not provided or invalid
+def get_armed_gain_pct():
+    raw = os.environ.get("ARMED_GAIN_PCT", "5")
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"Invalid ARMED_GAIN_PCT env value '{raw}', falling back to 5")
+        return 5.0
+
+# Percentage points drop from ATH that triggers trailing sell
+# Defaults to 3 if not provided or invalid
+def get_trail_drop_pct():
+    raw = os.environ.get("TRAIL_DROP_PCT", "3")
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"Invalid TRAIL_DROP_PCT env value '{raw}', falling back to 3")
+        return 3.0
+
 STOP_LOSS_PCT = get_stop_loss_pct()
+ARMED_GAIN_PCT = get_armed_gain_pct()
+TRAIL_DROP_PCT = get_trail_drop_pct()
 
 # ----------------------------------------------------------------------
 # Google Sheets Setup
@@ -171,8 +193,8 @@ def run_cycle(ws):
         if percent_gain > ath:
             ath = percent_gain
 
-        # arming logic
-        if percent_gain >= 5 and not armed:
+        # arming logic (now env-configurable)
+        if percent_gain >= ARMED_GAIN_PCT and not armed:
             armed = True
 
         # selling logic
@@ -182,14 +204,19 @@ def run_cycle(ws):
         if percent_gain <= STOP_LOSS_PCT:
             should_sell = True
 
-        # Rule 2: trailing take profit: if armed + drop 3% from ATH
-        if armed and percent_gain <= (ath - 3):
+        # Rule 2: trailing take profit: if armed + drop TRAIL_DROP_PCT from ATH
+        if armed and percent_gain <= (ath - TRAIL_DROP_PCT):
             should_sell = True
 
         if should_sell:
             try:
                 alpaca.close_position(ticker)
-                print(f"SOLD {ticker} @ {round(percent_gain, 2)}% (STOP_LOSS_PCT={STOP_LOSS_PCT})")
+                print(
+                    f"SOLD {ticker} @ {round(percent_gain, 2)}% "
+                    f"(STOP_LOSS_PCT={STOP_LOSS_PCT}, "
+                    f"ARMED_GAIN_PCT={ARMED_GAIN_PCT}, "
+                    f"TRAIL_DROP_PCT={TRAIL_DROP_PCT})"
+                )
 
                 record_closed_trade(ws, ticker, round(percent_gain, 2), armed)
 
@@ -221,7 +248,11 @@ def run_cycle(ws):
 # LOOP FOREVER
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
-    print(f"Using STOP_LOSS_PCT = {STOP_LOSS_PCT}")
+    print(
+        f"Using STOP_LOSS_PCT = {STOP_LOSS_PCT}, "
+        f"ARMED_GAIN_PCT = {ARMED_GAIN_PCT}, "
+        f"TRAIL_DROP_PCT = {TRAIL_DROP_PCT}"
+    )
     ws = connect_sheet()
     while True:
         try:
