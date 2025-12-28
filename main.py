@@ -189,13 +189,18 @@ def run_cycle(ws):
             ath = percent_gain
             armed = False
 
-        # update ATH
-        if percent_gain > ath:
+        # If position goes negative, reset ATH and disarm
+        if percent_gain < 0:
             ath = percent_gain
+            armed = False
+        else: 
+            # update ATH
+            if percent_gain > ath:
+                ath = percent_gain
 
-        # arming logic: arm if ATH has ever reached the threshold
-        if ath >= ARMED_GAIN_PCT:
-            armed = True
+            # arming logic: arm if ATH has ever reached the threshold
+            if ath >= ARMED_GAIN_PCT:
+                armed = True
 
         # selling logic
         should_sell = False
