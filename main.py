@@ -193,8 +193,8 @@ def run_cycle(ws):
         if percent_gain > ath:
             ath = percent_gain
 
-        # arming logic (now env-configurable)
-        if percent_gain >= ARMED_GAIN_PCT and not armed:
+        # arming logic: arm if ATH has ever reached the threshold
+        if ath >= ARMED_GAIN_PCT:
             armed = True
 
         # selling logic
